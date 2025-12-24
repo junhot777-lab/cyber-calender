@@ -1,269 +1,208 @@
 import os
-from datetime import date
 from typing import Optional, List
 
-from fastapi import FastAPI, Depends, HTTPException
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from fastapi.middleware.cors import CORSMiddleware
 
-from dotenv import load_dotenv
-load_dotenv()  # ✅ .env 로드 (가장 중요)
-
-from sqlalchemy import Column, Integer, String, Date, Text, UniqueConstraint, select
-from sqlalchemy.orm import Session
-
-from .db import Base, engine, get_db
+from sqlalchemy import create_engine, Column, Integer, String, Text
+from sqlalchemy.orm import sessionmaker, declarative_base
 
 
-# =========================
-# 상수/정책
-# =========================
-APP_TITLE = "친구 일정 공유 시스템"
+# ----------------------------
+# 설정
+# ----------------------------
+# Render에선 DATABASE_URL 환경변수로 Postgres URL 넣는게 정석
+# 없으면 로컬용 sqlite로 동작
+DATABASE_URL = os.getenv("DATABASE_URL") or os.getenv("DATABASE_URL".lower())
+if not DATABASE_URL:
+    DATABASE_URL = "sqlite:///./dev.db"
 
-START_DATE = date(2025, 12, 1)
-END_DATE = date(2026, 12, 31)
+# Render Postgres가 "postgres://"로 주는 경우가 있어서 보정
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
+elif DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
 
-FRIENDS = [
-    {"key": "HJ", "name": "조현준", "color": "#ff2d2d", "env": "PASS_HJ"},
-    {"key": "SK", "name": "김수겸", "color": "#2d6bff", "env": "PASS_SK"},
-    {"key": "JH", "name": "장준호", "color": "#ff4dbe", "env": "PASS_JH"},
-]
+# sqlite는 check_same_thread 옵션 필요
+engine_kwargs = {}
+if DATABASE_URL.startswith("sqlite"):
+    engine_kwargs["connect_args"] = {"check_same_thread": False}
+
+engine = create_engine(DATABASE_URL, **engine_kwargs)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
 
 
-# =========================
-# DB Models
-# =========================
+# ----------------------------
+# DB 모델
+# ----------------------------
 class User(Base):
     __tablename__ = "users"
+
     id = Column(Integer, primary_key=True)
-    key = Column(String(10), unique=True, nullable=False)     # HJ / SK / JH
-    name = Column(String(50), nullable=False)                 # 표시 이름
-    color = Column(String(20), nullable=False)                # HEX color
-    passcode = Column(String(200), nullable=False)            # 간단 passcode(요구사항 그대로)
+    key = Column(String(20), unique=True, index=True, nullable=False)  # 예: HJ, KS, JH
+    name = Column(String(50), nullable=False)
+    color = Column(String(30), nullable=True)  # 예: red/blue/pink
+    passcode = Column(String(200), nullable=False)
+
 
 class Event(Base):
     __tablename__ = "events"
+
     id = Column(Integer, primary_key=True)
-    day = Column(Date, nullable=False)
-    owner_key = Column(String(10), nullable=False)            # HJ / SK / JH
-    title = Column(String(120), nullable=False)
-    note = Column(Text, nullable=True)
-
-    __table_args__ = (
-        UniqueConstraint("day", "owner_key", name="uq_day_owner"),
-    )
+    user_key = Column(String(20), index=True, nullable=False)
+    date = Column(String(20), index=True, nullable=False)  # "YYYY-MM-DD"
+    title = Column(Text, nullable=False)
 
 
-# =========================
-# Schemas
-# =========================
-class LoginRequest(BaseModel):
-    key: str
-    passcode: str
+# ----------------------------
+# 앱 초기화
+# ----------------------------
+app = FastAPI(title="친구 일정 공유 시스템")
 
-class LoginResponse(BaseModel):
-    ok: bool
-    name: str
-    color: str
+# CORS (친구들 브라우저에서 호출할 수도 있으니 넉넉하게)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-class EventUpsertRequest(BaseModel):
-    key: str                 # 누가 작성/수정? HJ/SK/JH
-    passcode: str            # 해당 사용자 고유 암호
-    day: date                # 일정 날짜
-    title: str               # 일정 제목
-    note: Optional[str] = "" # 메모
-
-class EventDeleteRequest(BaseModel):
-    key: str
-    passcode: str
-    day: date
+# 프로젝트 루트 기준 static 폴더
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
-class EventOut(BaseModel):
-    day: date
-    owner_key: str
-    owner_name: str
-    color: str
-    title: str
-    note: Optional[str] = ""
+# ----------------------------
+# DB 준비 + 기본 유저 시드
+# ----------------------------
+def init_db_and_seed():
+    Base.metadata.create_all(bind=engine)
 
+    # 환경변수에서 비번 가져오기 (Render env vars에 PASS_HJ 같은거 넣었지?)
+    # 없으면 기본값 "1234" (배포할 땐 바꾸셈, 안 바꾸면 친구가 아니라 랜덤이 들어온다)
+    pass_hj = os.getenv("PASS_HJ", "1234")
+    pass_ks = os.getenv("PASS_KS", "1234")
+    pass_jh = os.getenv("PASS_JH", "1234")
 
-# =========================
-# Helpers
-# =========================
-def ensure_env_ready():
-    """
-    요구사항: 친구별 고유 암호 env 필요
-    """
-    missing = []
-    for f in FRIENDS:
-        if not os.getenv(f["env"]):
-            missing.append(f["env"])
-    if missing:
-        raise RuntimeError(f"{', '.join(missing)} 환경변수가 필요합니다.")
+    default_users = [
+        ("HJ", "조현준", "red", pass_hj),
+        ("KS", "김수겸", "blue", pass_ks),
+        ("JH", "장준호", "hotpink", pass_jh),
+    ]
 
-
-def in_range(d: date) -> bool:
-    return START_DATE <= d <= END_DATE
-
-
-def seed_users(db: Session):
-    """
-    최초 실행 시 3명 유저를 DB에 시드.
-    - 환경변수 PASS_HJ/PASS_SK/PASS_JH 필수
-    - 이미 있으면 업데이트(색상/이름/암호 반영)
-    """
-    ensure_env_ready()
-
-    for f in FRIENDS:
-        passcode = os.getenv(f["env"]).strip()
-        existing = db.execute(select(User).where(User.key == f["key"])).scalar_one_or_none()
-        if existing:
-            existing.name = f["name"]
-            existing.color = f["color"]
-            existing.passcode = passcode
-        else:
-            db.add(User(key=f["key"], name=f["name"], color=f["color"], passcode=passcode))
-    db.commit()
-
-
-def auth_user(db: Session, key: str, passcode: str) -> User:
-    key = key.strip().upper()
-    u = db.execute(select(User).where(User.key == key)).scalar_one_or_none()
-    if not u:
-        raise HTTPException(status_code=404, detail="존재하지 않는 사용자입니다.")
-    if u.passcode != passcode:
-        raise HTTPException(status_code=401, detail="암호가 틀렸습니다.")
-    return u
-
-
-# =========================
-# App
-# =========================
-app = FastAPI(title=APP_TITLE)
+    db = SessionLocal()
+    try:
+        for key, name, color, passcode in default_users:
+            exists = db.query(User).filter(User.key == key).first()
+            if not exists:
+                db.add(User(key=key, name=name, color=color, passcode=passcode))
+        db.commit()
+    finally:
+        db.close()
 
 
 @app.on_event("startup")
-def _startup():
-    # 테이블 생성
-    Base.metadata.create_all(bind=engine)
-
-    # 유저 시드 (필요 env 없으면 여기서 명확하게 터짐)
-    # -> 너 지금 보고있는 PASS_HJ 같은 에러는 여기서 나오는 게 정상임
-    from sqlalchemy.orm import Session as _S
-    with _S(bind=engine) as db:
-        seed_users(db)
+def on_startup():
+    init_db_and_seed()
 
 
-# =========================
-# Routes
-# =========================
+# ----------------------------
+# 라우팅
+# ----------------------------
+@app.get("/")
+def serve_index():
+    index_path = os.path.join(STATIC_DIR, "index.html")
+    if not os.path.exists(index_path):
+        raise HTTPException(status_code=500, detail="static/index.html not found")
+    return FileResponse(index_path)
+
+
 @app.get("/health")
 def health():
-    return {"ok": True, "service": APP_TITLE, "range": {"from": str(START_DATE), "to": str(END_DATE)}}
+    return {"status": "ok"}
 
 
 @app.get("/users")
-def list_users(db: Session = Depends(get_db)):
-    users = db.execute(select(User)).scalars().all()
-    return [
-        {"key": u.key, "name": u.name, "color": u.color}
-        for u in users
-    ]
+def list_users():
+    db = SessionLocal()
+    try:
+        users = db.query(User).all()
+        return [{"key": u.key, "name": u.name, "color": u.color} for u in users]
+    finally:
+        db.close()
 
 
-@app.post("/login", response_model=LoginResponse)
-def login(payload: LoginRequest, db: Session = Depends(get_db)):
-    u = auth_user(db, payload.key, payload.passcode)
-    return LoginResponse(ok=True, name=u.name, color=u.color)
+@app.post("/login")
+def login(user_key: str, passcode: str):
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.key == user_key).first()
+        if not user or user.passcode != passcode:
+            raise HTTPException(status_code=401, detail="인증 실패")
+        return {"success": True, "key": user.key, "name": user.name, "color": user.color}
+    finally:
+        db.close()
 
 
-@app.get("/events", response_model=List[EventOut])
-def get_events(from_date: Optional[date] = None, to_date: Optional[date] = None, db: Session = Depends(get_db)):
-    # 기본: 전체 범위(2025-12 ~ 2026-12)
-    fd = from_date or START_DATE
-    td = to_date or END_DATE
-
-    if fd < START_DATE:
-        fd = START_DATE
-    if td > END_DATE:
-        td = END_DATE
-    if fd > td:
-        raise HTTPException(status_code=400, detail="날짜 범위가 이상합니다.")
-
-    events = db.execute(
-        select(Event).where(Event.day >= fd).where(Event.day <= td)
-    ).scalars().all()
-
-    # 사용자 맵
-    users = {u.key: u for u in db.execute(select(User)).scalars().all()}
-
-    out = []
-    for e in events:
-        u = users.get(e.owner_key)
-        out.append(EventOut(
-            day=e.day,
-            owner_key=e.owner_key,
-            owner_name=u.name if u else e.owner_key,
-            color=u.color if u else "#999999",
-            title=e.title,
-            note=e.note or ""
-        ))
-    return out
+@app.get("/events")
+def get_events(user_key: Optional[str] = None):
+    db = SessionLocal()
+    try:
+        q = db.query(Event)
+        if user_key:
+            q = q.filter(Event.user_key == user_key)
+        events = q.order_by(Event.date.asc(), Event.id.asc()).all()
+        return [{"id": e.id, "user_key": e.user_key, "date": e.date, "title": e.title} for e in events]
+    finally:
+        db.close()
 
 
 @app.post("/events/upsert")
-def upsert_event(payload: EventUpsertRequest, db: Session = Depends(get_db)):
-    # 권한 체크
-    u = auth_user(db, payload.key, payload.passcode)
+def upsert_event(user_key: str, passcode: str, date: str, title: str):
+    # 인증
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.key == user_key).first()
+        if not user or user.passcode != passcode:
+            raise HTTPException(status_code=401, detail="권한 없음")
 
-    if not in_range(payload.day):
-        raise HTTPException(status_code=400, detail="허용 범위(2025-12 ~ 2026-12) 밖입니다.")
+        # 같은 유저/같은 날짜 이벤트는 1개로 유지 (있으면 수정, 없으면 생성)
+        ev = db.query(Event).filter(Event.user_key == user_key, Event.date == date).first()
+        if ev:
+            ev.title = title
+        else:
+            ev = Event(user_key=user_key, date=date, title=title)
+            db.add(ev)
 
-    title = (payload.title or "").strip()
-    if not title:
-        raise HTTPException(status_code=400, detail="title은 비어있을 수 없습니다.")
-
-    note = (payload.note or "").strip()
-
-    # 동일 (day, owner_key) 있으면 업데이트, 없으면 생성
-    existing = db.execute(
-        select(Event).where(Event.day == payload.day).where(Event.owner_key == u.key)
-    ).scalar_one_or_none()
-
-    if existing:
-        existing.title = title
-        existing.note = note
-    else:
-        db.add(Event(day=payload.day, owner_key=u.key, title=title, note=note))
-
-    db.commit()
-    return {"ok": True}
+        db.commit()
+        return {"success": True}
+    finally:
+        db.close()
 
 
 @app.post("/events/delete")
-def delete_event(payload: EventDeleteRequest, db: Session = Depends(get_db)):
-    u = auth_user(db, payload.key, payload.passcode)
+def delete_event(user_key: str, passcode: str, event_id: int):
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.key == user_key).first()
+        if not user or user.passcode != passcode:
+            raise HTTPException(status_code=401, detail="권한 없음")
 
-    if not in_range(payload.day):
-        raise HTTPException(status_code=400, detail="허용 범위(2025-12 ~ 2026-12) 밖입니다.")
+        ev = db.query(Event).filter(Event.id == event_id).first()
+        if not ev:
+            raise HTTPException(status_code=404, detail="일정 없음")
 
-    existing = db.execute(
-        select(Event).where(Event.day == payload.day).where(Event.owner_key == u.key)
-    ).scalar_one_or_none()
+        # 남 삭제 방지: 자기 키만 삭제 가능
+        if ev.user_key != user_key:
+            raise HTTPException(status_code=403, detail="남의 일정 삭제 금지")
 
-    if not existing:
-        return {"ok": True, "deleted": 0}
-
-    db.delete(existing)
-    db.commit()
-    return {"ok": True, "deleted": 1}
-
-
-# =========================
-# Friendly error
-# =========================
-@app.exception_handler(RuntimeError)
-def runtime_error_handler(request, exc: RuntimeError):
-    # env 누락 같은 문제를 프론트에서 보기 쉽게
-    return JSONResponse(status_code=500, content={"ok": False, "error": str(exc)})
+        db.delete(ev)
+        db.commit()
+        return {"success": True}
+    finally:
+        db.close()
