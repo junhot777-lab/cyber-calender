@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Cyber Calendar</title>
+
+  <link rel="stylesheet" href="/static/styles.css" />
+
+  <!-- FullCalendar CDN -->
+  <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css" rel="stylesheet">
+</head>
+<body>
+  <div class="bg-grid"></div>
+  <div class="glow-orb orb1"></div>
+  <div class="glow-orb orb2"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">◆</div>
+      <div>
+        <div class="title">CYBER SCHEDULE</div>
+        <div class="subtitle">2025-12 ~ 2026-12</div>
+      </div>
+    </div>
+
+    <div class="me" id="meBox">
+      <span class="badge" id="meBadge">OFFLINE</span>
+      <button class="btn ghost" id="logoutBtn" style="display:none;">로그아웃</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="card" id="loginCard">
+      <h2>로그인</h2>
+      <p class="muted">친구 3명 고정. 암호 맞아야 들어옴. 인간 인증 절차.</p>
+
+      <div class="row">
+        <label>사용자</label>
+        <select id="userSelect"></select>
+      </div>
+
+      <div class="row">
+        <label>암호</label>
+        <input id="passInput" type="password" placeholder="암호 입력" autocomplete="off"/>
+      </div>
+
+      <button class="btn" id="loginBtn">접속</button>
+
+      <div class="hint">
+        <div class="hintTitle">규칙</div>
+        <ul>
+          <li>일정 추가/수정/삭제는 매번 암호를 다시 입력해야 함</li>
+          <li>작성자만 수정/삭제 가능</li>
+          <li>범위는 2025년 12월부터 2026년 12월까지</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="card" id="calendarCard" style="display:none;">
+      <div class="toolbar">
+        <div class="legend" id="legend"></div>
+        <div class="small muted">드래그로 일정 생성, 클릭으로 수정/삭제</div>
+      </div>
+      <div id="calendar"></div>
+    </section>
+
+    <!-- 모달 -->
+    <div class="modal" id="modal" style="display:none;">
+      <div class="modal-inner">
+        <div class="modal-title" id="modalTitle">암호 확인</div>
+        <div class="modal-body">
+          <input id="modalPass" type="password" placeholder="수정 암호 입력" autocomplete="off"/>
+          <textarea id="modalNote" placeholder="메모(선택)" rows="3"></textarea>
+        </div>
+        <div class="modal-actions">
+          <button class="btn ghost" id="modalCancel">취소</button>
+          <button class="btn" id="modalOk">확인</button>
+        </div>
+        <div class="modal-foot muted" id="modalFoot"></div>
+      </div>
+    </div>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
