@@ -1,208 +1,227 @@
 import os
-from typing import Optional, List
+import json
+from datetime import datetime, date
+from typing import Optional, List, Dict, Any
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
-from sqlalchemy import create_engine, Column, Integer, String, Text
-from sqlalchemy.orm import sessionmaker, declarative_base
+# -----------------------------
+# 환경변수
+# -----------------------------
+# Render에서 Environment Variables로 넣은 값들
+PASS_HJ = os.getenv("PASS_HJ", "").strip()
+PASS_KS = os.getenv("PASS_KS", "").strip()
+PASS_JH = os.getenv("PASS_JH", "").strip()
 
+# 기본 사용자 목록(고정 3명)
+USERS = [
+    {"id": "HJ", "name": "HJ", "pass_env": "PASS_HJ", "password": PASS_HJ},
+    {"id": "KS", "name": "KS", "pass_env": "PASS_KS", "password": PASS_KS},
+    {"id": "JH", "name": "JH", "pass_env": "PASS_JH", "password": PASS_JH},
+]
 
-# ----------------------------
-# 설정
-# ----------------------------
-# Render에선 DATABASE_URL 환경변수로 Postgres URL 넣는게 정석
-# 없으면 로컬용 sqlite로 동작
-DATABASE_URL = os.getenv("DATABASE_URL") or os.getenv("DATABASE_URL".lower())
-if not DATABASE_URL:
-    DATABASE_URL = "sqlite:///./dev.db"
-
-# Render Postgres가 "postgres://"로 주는 경우가 있어서 보정
-if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
-elif DATABASE_URL.startswith("postgresql://"):
-    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
-
-# sqlite는 check_same_thread 옵션 필요
-engine_kwargs = {}
-if DATABASE_URL.startswith("sqlite"):
-    engine_kwargs["connect_args"] = {"check_same_thread": False}
-
-engine = create_engine(DATABASE_URL, **engine_kwargs)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
+# 간단 DB: JSON 파일로 저장 (Render에서도 디스크는 일단 동작, 다만 free 플랜은 재배포/재시작 시 날아갈 수 있음)
+# 제대로 영구 저장하려면 Postgres 붙여야 하는데, 너 지금 급한 건 "작동"이잖아.
+DATA_PATH = os.getenv("DATA_PATH", "data.json")
 
 
-# ----------------------------
-# DB 모델
-# ----------------------------
-class User(Base):
-    __tablename__ = "users"
-
-    id = Column(Integer, primary_key=True)
-    key = Column(String(20), unique=True, index=True, nullable=False)  # 예: HJ, KS, JH
-    name = Column(String(50), nullable=False)
-    color = Column(String(30), nullable=True)  # 예: red/blue/pink
-    passcode = Column(String(200), nullable=False)
-
-
-class Event(Base):
-    __tablename__ = "events"
-
-    id = Column(Integer, primary_key=True)
-    user_key = Column(String(20), index=True, nullable=False)
-    date = Column(String(20), index=True, nullable=False)  # "YYYY-MM-DD"
-    title = Column(Text, nullable=False)
-
-
-# ----------------------------
-# 앱 초기화
-# ----------------------------
-app = FastAPI(title="친구 일정 공유 시스템")
-
-# CORS (친구들 브라우저에서 호출할 수도 있으니 넉넉하게)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# 프로젝트 루트 기준 static 폴더
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-STATIC_DIR = os.path.join(BASE_DIR, "static")
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-
-
-# ----------------------------
-# DB 준비 + 기본 유저 시드
-# ----------------------------
-def init_db_and_seed():
-    Base.metadata.create_all(bind=engine)
-
-    # 환경변수에서 비번 가져오기 (Render env vars에 PASS_HJ 같은거 넣었지?)
-    # 없으면 기본값 "1234" (배포할 땐 바꾸셈, 안 바꾸면 친구가 아니라 랜덤이 들어온다)
-    pass_hj = os.getenv("PASS_HJ", "1234")
-    pass_ks = os.getenv("PASS_KS", "1234")
-    pass_jh = os.getenv("PASS_JH", "1234")
-
-    default_users = [
-        ("HJ", "조현준", "red", pass_hj),
-        ("KS", "김수겸", "blue", pass_ks),
-        ("JH", "장준호", "hotpink", pass_jh),
-    ]
-
-    db = SessionLocal()
+def load_data() -> Dict[str, Any]:
+    if not os.path.exists(DATA_PATH):
+        return {"events": []}
     try:
-        for key, name, color, passcode in default_users:
-            exists = db.query(User).filter(User.key == key).first()
-            if not exists:
-                db.add(User(key=key, name=name, color=color, passcode=passcode))
-        db.commit()
-    finally:
-        db.close()
+        with open(DATA_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {"events": []}
 
 
-@app.on_event("startup")
-def on_startup():
-    init_db_and_seed()
+def save_data(data: Dict[str, Any]) -> None:
+    with open(DATA_PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-# ----------------------------
-# 라우팅
-# ----------------------------
+# -----------------------------
+# Pydantic 모델
+# -----------------------------
+class LoginBody(BaseModel):
+    user_id: str
+    password: str
+
+
+class EventCreate(BaseModel):
+    user_id: str
+    password: str
+    title: str
+    day: str  # "YYYY-MM-DD"
+    time: Optional[str] = None  # "HH:MM" optional
+    memo: Optional[str] = ""
+
+
+class EventUpdate(BaseModel):
+    user_id: str
+    password: str
+    title: Optional[str] = None
+    time: Optional[str] = None
+    memo: Optional[str] = None
+
+
+# -----------------------------
+# FastAPI 앱
+# -----------------------------
+app = FastAPI(title="Cyber Calendar", version="1.0.0")
+
+# 정적 파일(프론트) 마운트
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
 @app.get("/")
-def serve_index():
-    index_path = os.path.join(STATIC_DIR, "index.html")
-    if not os.path.exists(index_path):
-        raise HTTPException(status_code=500, detail="static/index.html not found")
-    return FileResponse(index_path)
+def root():
+    # 루트에서 index.html 제공 (Render에서 빈 화면/404 뜨던 거 여기서 끝냄)
+    return FileResponse("static/index.html")
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"ok": True, "time": datetime.utcnow().isoformat()}
 
 
-@app.get("/users")
-def list_users():
-    db = SessionLocal()
+# -----------------------------
+# 유틸: 인증
+# -----------------------------
+def require_login(user_id: str, password: str) -> Dict[str, str]:
+    user_id = (user_id or "").strip()
+    password = (password or "").strip()
+
+    user = next((u for u in USERS if u["id"] == user_id), None)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid user")
+
+    if not user["password"]:
+        # 환경변수 자체가 비어있으면 서버가 인증 불가
+        raise HTTPException(
+            status_code=500,
+            detail=f"Server missing env var {user['pass_env']}. Set it on Render.",
+        )
+
+    if password != user["password"]:
+        raise HTTPException(status_code=401, detail="Wrong password")
+
+    return {"id": user["id"], "name": user["name"]}
+
+
+# -----------------------------
+# API: 사용자 목록 (프론트가 /api/users 부르니까 반드시 있어야 함)
+# -----------------------------
+@app.get("/api/users")
+def api_users():
+    # 비번은 절대 내려주지 않음 (세상에…)
+    return [{"id": u["id"], "name": u["name"]} for u in USERS]
+
+
+# -----------------------------
+# API: 로그인
+# -----------------------------
+@app.post("/api/login")
+def api_login(body: LoginBody):
+    user = require_login(body.user_id, body.password)
+    return {"ok": True, "user": user}
+
+
+# -----------------------------
+# API: 이벤트 CRUD
+# -----------------------------
+@app.get("/api/events")
+def api_list_events():
+    data = load_data()
+    events = data.get("events", [])
+    # 정렬(날짜/시간)
+    def key(e):
+        return (e.get("day", ""), e.get("time") or "99:99", e.get("id", ""))
+    events = sorted(events, key=key)
+    return {"events": events}
+
+
+@app.post("/api/events")
+def api_create_event(body: EventCreate):
+    user = require_login(body.user_id, body.password)
+
+    # 날짜 검증
     try:
-        users = db.query(User).all()
-        return [{"key": u.key, "name": u.name, "color": u.color} for u in users]
-    finally:
-        db.close()
+        date.fromisoformat(body.day)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid day (YYYY-MM-DD)")
+
+    if body.time:
+        # 아주 가벼운 시간 검증
+        try:
+            hh, mm = body.time.split(":")
+            int(hh), int(mm)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid time (HH:MM)")
+
+    data = load_data()
+    events = data.get("events", [])
+
+    new_id = f"e{int(datetime.utcnow().timestamp() * 1000)}"
+    ev = {
+        "id": new_id,
+        "owner": user["id"],
+        "title": body.title.strip(),
+        "day": body.day,
+        "time": (body.time or "").strip() or None,
+        "memo": (body.memo or "").strip(),
+        "created_at": datetime.utcnow().isoformat(),
+    }
+    events.append(ev)
+    data["events"] = events
+    save_data(data)
+    return {"ok": True, "event": ev}
 
 
-@app.post("/login")
-def login(user_key: str, passcode: str):
-    db = SessionLocal()
-    try:
-        user = db.query(User).filter(User.key == user_key).first()
-        if not user or user.passcode != passcode:
-            raise HTTPException(status_code=401, detail="인증 실패")
-        return {"success": True, "key": user.key, "name": user.name, "color": user.color}
-    finally:
-        db.close()
+@app.patch("/api/events/{event_id}")
+def api_update_event(event_id: str, body: EventUpdate):
+    user = require_login(body.user_id, body.password)
+
+    data = load_data()
+    events = data.get("events", [])
+
+    ev = next((x for x in events if x.get("id") == event_id), None)
+    if not ev:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    if ev.get("owner") != user["id"]:
+        raise HTTPException(status_code=403, detail="Only owner can edit")
+
+    if body.title is not None:
+        ev["title"] = body.title.strip()
+    if body.time is not None:
+        t = body.time.strip()
+        ev["time"] = t if t else None
+    if body.memo is not None:
+        ev["memo"] = body.memo.strip()
+
+    ev["updated_at"] = datetime.utcnow().isoformat()
+    save_data(data)
+    return {"ok": True, "event": ev}
 
 
-@app.get("/events")
-def get_events(user_key: Optional[str] = None):
-    db = SessionLocal()
-    try:
-        q = db.query(Event)
-        if user_key:
-            q = q.filter(Event.user_key == user_key)
-        events = q.order_by(Event.date.asc(), Event.id.asc()).all()
-        return [{"id": e.id, "user_key": e.user_key, "date": e.date, "title": e.title} for e in events]
-    finally:
-        db.close()
+@app.delete("/api/events/{event_id}")
+def api_delete_event(event_id: str, user_id: str, password: str):
+    user = require_login(user_id, password)
 
+    data = load_data()
+    events = data.get("events", [])
 
-@app.post("/events/upsert")
-def upsert_event(user_key: str, passcode: str, date: str, title: str):
-    # 인증
-    db = SessionLocal()
-    try:
-        user = db.query(User).filter(User.key == user_key).first()
-        if not user or user.passcode != passcode:
-            raise HTTPException(status_code=401, detail="권한 없음")
+    ev = next((x for x in events if x.get("id") == event_id), None)
+    if not ev:
+        raise HTTPException(status_code=404, detail="Event not found")
 
-        # 같은 유저/같은 날짜 이벤트는 1개로 유지 (있으면 수정, 없으면 생성)
-        ev = db.query(Event).filter(Event.user_key == user_key, Event.date == date).first()
-        if ev:
-            ev.title = title
-        else:
-            ev = Event(user_key=user_key, date=date, title=title)
-            db.add(ev)
+    if ev.get("owner") != user["id"]:
+        raise HTTPException(status_code=403, detail="Only owner can delete")
 
-        db.commit()
-        return {"success": True}
-    finally:
-        db.close()
-
-
-@app.post("/events/delete")
-def delete_event(user_key: str, passcode: str, event_id: int):
-    db = SessionLocal()
-    try:
-        user = db.query(User).filter(User.key == user_key).first()
-        if not user or user.passcode != passcode:
-            raise HTTPException(status_code=401, detail="권한 없음")
-
-        ev = db.query(Event).filter(Event.id == event_id).first()
-        if not ev:
-            raise HTTPException(status_code=404, detail="일정 없음")
-
-        # 남 삭제 방지: 자기 키만 삭제 가능
-        if ev.user_key != user_key:
-            raise HTTPException(status_code=403, detail="남의 일정 삭제 금지")
-
-        db.delete(ev)
-        db.commit()
-        return {"success": True}
-    finally:
-        db.close()
+    data["events"] = [x for x in events if x.get("id") != event_id]
+    save_data(data)
+    return {"ok": True}

@@ -2,87 +2,542 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Cyber Calendar</title>
-
-  <link rel="stylesheet" href="/static/styles.css" />
-
-  <!-- FullCalendar CDN -->
-  <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css" rel="stylesheet">
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>친구 일정 공유 시스템</title>
+  <style>
+    :root{
+      --bg1:#0b1020;
+      --bg2:#1b0b2e;
+      --card:rgba(255,255,255,.06);
+      --border:rgba(255,255,255,.12);
+      --text:rgba(255,255,255,.92);
+      --muted:rgba(255,255,255,.62);
+      --accent:#7ef0d9;
+      --danger:#ff5c7a;
+      --ok:#69ff9a;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      min-height:100vh;
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Apple SD Gothic Neo", "Noto Sans KR", Arial;
+      color:var(--text);
+      background:
+        radial-gradient(1000px 700px at 25% 20%, rgba(126,240,217,.25), transparent 60%),
+        radial-gradient(900px 650px at 70% 60%, rgba(160,120,255,.25), transparent 60%),
+        linear-gradient(135deg, var(--bg1), var(--bg2));
+      padding: 32px 18px;
+    }
+    .wrap{
+      max-width: 980px;
+      margin: 0 auto;
+    }
+    .title{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+      margin-bottom:14px;
+    }
+    .title h1{
+      margin:0;
+      font-size:22px;
+      letter-spacing:-.3px;
+    }
+    .pill{
+      font-size:12px;
+      color:var(--muted);
+      border:1px solid var(--border);
+      padding:6px 10px;
+      border-radius:999px;
+      background:rgba(255,255,255,.04);
+    }
+    .grid{
+      display:grid;
+      grid-template-columns: 420px 1fr;
+      gap: 14px;
+    }
+    @media (max-width: 920px){
+      .grid{grid-template-columns:1fr}
+    }
+    .card{
+      border:1px solid var(--border);
+      background: var(--card);
+      border-radius: 14px;
+      padding: 16px;
+      backdrop-filter: blur(10px);
+    }
+    .card h2{
+      margin:0 0 10px 0;
+      font-size:18px;
+      letter-spacing:-.2px;
+    }
+    .desc{color:var(--muted); font-size:13px; line-height:1.45; margin:0 0 12px 0;}
+    .row{
+      display:grid;
+      grid-template-columns: 90px 1fr;
+      gap:10px;
+      align-items:center;
+      margin: 10px 0;
+    }
+    label{color:var(--muted); font-size:13px;}
+    select,input,textarea{
+      width:100%;
+      border-radius: 10px;
+      border:1px solid var(--border);
+      background: rgba(0,0,0,.28);
+      color: var(--text);
+      padding: 10px 10px;
+      outline:none;
+    }
+    textarea{min-height:80px; resize:vertical}
+    .btns{display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;}
+    button{
+      cursor:pointer;
+      border:none;
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-weight: 700;
+      background: rgba(126,240,217,.22);
+      color: var(--text);
+      border:1px solid rgba(126,240,217,.35);
+    }
+    button:disabled{opacity:.55; cursor:not-allowed}
+    .ghost{
+      background: rgba(255,255,255,.06);
+      border:1px solid var(--border);
+    }
+    .danger{
+      background: rgba(255,92,122,.16);
+      border:1px solid rgba(255,92,122,.35);
+    }
+    .ok{
+      color: var(--ok);
+      font-size:12px;
+      margin-top:10px;
+    }
+    .err{
+      color: var(--danger);
+      font-size:12px;
+      margin-top:10px;
+      white-space:pre-wrap;
+    }
+    .rule{
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px dashed var(--border);
+      color: var(--muted);
+      font-size: 13px;
+      line-height:1.5;
+    }
+    .events h2{display:flex; justify-content:space-between; align-items:center;}
+    .list{margin-top:10px; display:flex; flex-direction:column; gap:10px;}
+    .item{
+      border:1px solid var(--border);
+      background: rgba(0,0,0,.22);
+      border-radius: 14px;
+      padding: 12px;
+    }
+    .itemTop{
+      display:flex; justify-content:space-between; gap:10px; align-items:flex-start;
+    }
+    .itemTitle{
+      font-weight:800; letter-spacing:-.2px;
+    }
+    .meta{color:var(--muted); font-size:12px; margin-top:4px;}
+    .memo{color:rgba(255,255,255,.78); font-size:13px; margin-top:8px; white-space:pre-wrap;}
+    .miniBtns{display:flex; gap:8px; flex-wrap:wrap;}
+    .miniBtns button{padding:7px 9px; border-radius:10px; font-weight:800; font-size:12px;}
+    .hint{color:var(--muted); font-size:12px; margin-top:8px;}
+    .sep{height:1px; background:var(--border); margin:12px 0;}
+    .foot{color:rgba(255,255,255,.45); font-size:12px; margin-top:12px;}
+  </style>
 </head>
 <body>
-  <div class="bg-grid"></div>
-  <div class="glow-orb orb1"></div>
-  <div class="glow-orb orb2"></div>
-
-  <header class="topbar">
-    <div class="brand">
-      <div class="logo">◆</div>
-      <div>
-        <div class="title">CYBER SCHEDULE</div>
-        <div class="subtitle">2025-12 ~ 2026-12</div>
-      </div>
+  <div class="wrap">
+    <div class="title">
+      <h1>친구 일정 공유 시스템</h1>
+      <div class="pill" id="statusPill">서버 연결 확인중…</div>
     </div>
 
-    <div class="me" id="meBox">
-      <span class="badge" id="meBadge">OFFLINE</span>
-      <button class="btn ghost" id="logoutBtn" style="display:none;">로그아웃</button>
-    </div>
-  </header>
+    <div class="grid">
+      <!-- LOGIN -->
+      <div class="card">
+        <h2>로그인</h2>
+        <p class="desc">친구 3명 고정. 암호 맞아야 들어옴. 인간 인증 절차. (기계 인증은 없음)</p>
 
-  <main class="container">
-    <section class="card" id="loginCard">
-      <h2>로그인</h2>
-      <p class="muted">친구 3명 고정. 암호 맞아야 들어옴. 인간 인증 절차.</p>
-
-      <div class="row">
-        <label>사용자</label>
-        <select id="userSelect"></select>
-      </div>
-
-      <div class="row">
-        <label>암호</label>
-        <input id="passInput" type="password" placeholder="암호 입력" autocomplete="off"/>
-      </div>
-
-      <button class="btn" id="loginBtn">접속</button>
-
-      <div class="hint">
-        <div class="hintTitle">규칙</div>
-        <ul>
-          <li>일정 추가/수정/삭제는 매번 암호를 다시 입력해야 함</li>
-          <li>작성자만 수정/삭제 가능</li>
-          <li>범위는 2025년 12월부터 2026년 12월까지</li>
-        </ul>
-      </div>
-    </section>
-
-    <section class="card" id="calendarCard" style="display:none;">
-      <div class="toolbar">
-        <div class="legend" id="legend"></div>
-        <div class="small muted">드래그로 일정 생성, 클릭으로 수정/삭제</div>
-      </div>
-      <div id="calendar"></div>
-    </section>
-
-    <!-- 모달 -->
-    <div class="modal" id="modal" style="display:none;">
-      <div class="modal-inner">
-        <div class="modal-title" id="modalTitle">암호 확인</div>
-        <div class="modal-body">
-          <input id="modalPass" type="password" placeholder="수정 암호 입력" autocomplete="off"/>
-          <textarea id="modalNote" placeholder="메모(선택)" rows="3"></textarea>
+        <div class="row">
+          <label>사용자</label>
+          <select id="userSelect"></select>
         </div>
-        <div class="modal-actions">
-          <button class="btn ghost" id="modalCancel">취소</button>
-          <button class="btn" id="modalOk">확인</button>
+
+        <div class="row">
+          <label>암호</label>
+          <input id="passInput" type="password" placeholder="비번" autocomplete="current-password" />
         </div>
-        <div class="modal-foot muted" id="modalFoot"></div>
+
+        <div class="btns">
+          <button id="loginBtn">접속</button>
+          <button class="ghost" id="logoutBtn" disabled>로그아웃</button>
+        </div>
+
+        <div id="loginOk" class="ok" style="display:none;"></div>
+        <div id="loginErr" class="err" style="display:none;"></div>
+
+        <div class="rule">
+          <b>규칙</b>
+          <ul style="margin:8px 0 0 18px;">
+            <li>일정 추가/수정/삭제는 매번 암호를 다시 입력해야 함</li>
+            <li>작성자만 수정/삭제 가능</li>
+            <li>범위는 2025년 12월부터 2026년 12월까지 (너가 원하면 바꿀 수는 있음)</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- EVENTS -->
+      <div class="card events">
+        <h2>
+          <span>일정</span>
+          <button class="ghost" id="refreshBtn">새로고침</button>
+        </h2>
+
+        <div class="sep"></div>
+
+        <div id="createBox">
+          <div class="row">
+            <label>날짜</label>
+            <input id="dayInput" type="date" />
+          </div>
+          <div class="row">
+            <label>시간</label>
+            <input id="timeInput" type="time" />
+          </div>
+          <div class="row">
+            <label>제목</label>
+            <input id="titleInput" type="text" placeholder="예: 치킨 먹기 / 스터디 / 약속" />
+          </div>
+          <div class="row">
+            <label>메모</label>
+            <textarea id="memoInput" placeholder="선택"></textarea>
+          </div>
+
+          <div class="btns">
+            <button id="addBtn" disabled>일정 추가</button>
+            <button class="ghost" id="clearBtn">입력 초기화</button>
+          </div>
+
+          <div class="hint">로그인하면 추가/수정/삭제 가능. 로그인 안 하면 구경만 가능.</div>
+          <div id="eventErr" class="err" style="display:none;"></div>
+          <div id="eventOk" class="ok" style="display:none;"></div>
+
+          <div class="sep"></div>
+        </div>
+
+        <div class="list" id="eventsList"></div>
+
+        <div class="foot">
+          API 경로: <code>/api/users</code>, <code>/api/login</code>, <code>/api/events</code>  
+          지금 너 콘솔의 404는 이거 없어서 터진 거임.
+        </div>
       </div>
     </div>
-  </main>
+  </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
-  <script src="/static/app.js"></script>
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    const statusPill = $("statusPill");
+    const userSelect = $("userSelect");
+    const passInput = $("passInput");
+    const loginBtn = $("loginBtn");
+    const logoutBtn = $("logoutBtn");
+
+    const loginOk = $("loginOk");
+    const loginErr = $("loginErr");
+
+    const refreshBtn = $("refreshBtn");
+    const addBtn = $("addBtn");
+    const clearBtn = $("clearBtn");
+
+    const dayInput = $("dayInput");
+    const timeInput = $("timeInput");
+    const titleInput = $("titleInput");
+    const memoInput = $("memoInput");
+
+    const eventsList = $("eventsList");
+    const eventErr = $("eventErr");
+    const eventOk = $("eventOk");
+
+    // 로그인 상태(브라우저 localStorage)
+    const LS_KEY = "cc_login";
+    function getLogin(){
+      try { return JSON.parse(localStorage.getItem(LS_KEY) || "null"); }
+      catch(e){ return null; }
+    }
+    function setLogin(v){
+      if(!v) localStorage.removeItem(LS_KEY);
+      else localStorage.setItem(LS_KEY, JSON.stringify(v));
+      syncLoginUI();
+    }
+
+    function showErr(el, msg){
+      el.style.display = "block";
+      el.textContent = msg;
+    }
+    function hideErr(el){
+      el.style.display = "none";
+      el.textContent = "";
+    }
+    function showOk(el, msg){
+      el.style.display = "block";
+      el.textContent = msg;
+      setTimeout(()=>{ el.style.display="none"; }, 2000);
+    }
+
+    async function api(path, options={}){
+      const res = await fetch(path, {
+        headers: {"Content-Type":"application/json"},
+        ...options
+      });
+      if(!res.ok){
+        let detail = "";
+        try{
+          const j = await res.json();
+          detail = j.detail ? String(j.detail) : JSON.stringify(j);
+        }catch(e){
+          detail = await res.text();
+        }
+        throw new Error(`${res.status} ${res.statusText}\n${detail}`);
+      }
+      // 204 같은 케이스는 없지만 안전하게
+      const text = await res.text();
+      return text ? JSON.parse(text) : null;
+    }
+
+    function syncLoginUI(){
+      const s = getLogin();
+      const loggedIn = !!(s && s.user && s.password);
+      addBtn.disabled = !loggedIn;
+      logoutBtn.disabled = !loggedIn;
+      loginBtn.disabled = false;
+
+      if(loggedIn){
+        userSelect.value = s.user.id;
+        passInput.value = s.password; // 편의상 저장 (싫으면 지워도 됨)
+      }
+    }
+
+    async function checkServer(){
+      try{
+        const h = await api("/health");
+        statusPill.textContent = "서버 연결됨";
+        statusPill.style.borderColor = "rgba(105,255,154,.35)";
+      }catch(e){
+        statusPill.textContent = "서버 연결 실패";
+        statusPill.style.borderColor = "rgba(255,92,122,.35)";
+      }
+    }
+
+    async function loadUsers(){
+      // 너 콘솔에서 404 뜬 바로 그 API
+      const users = await api("/api/users");
+      userSelect.innerHTML = "";
+      for(const u of users){
+        const opt = document.createElement("option");
+        opt.value = u.id;
+        opt.textContent = `${u.name} (${u.id})`;
+        userSelect.appendChild(opt);
+      }
+    }
+
+    async function doLogin(){
+      hideErr(loginErr);
+      loginOk.style.display = "none";
+
+      const user_id = userSelect.value;
+      const password = passInput.value;
+
+      try{
+        const r = await api("/api/login", {
+          method:"POST",
+          body: JSON.stringify({user_id, password})
+        });
+        setLogin({user: r.user, password});
+        showOk(loginOk, `접속 성공: ${r.user.name}`);
+        await loadEvents();
+      }catch(e){
+        showErr(loginErr, e.message);
+      }
+    }
+
+    function doLogout(){
+      setLogin(null);
+      passInput.value = "";
+      showOk(loginOk, "로그아웃됨");
+    }
+
+    function clearInputs(){
+      titleInput.value = "";
+      memoInput.value = "";
+      timeInput.value = "";
+      // day는 유지해도 되고 초기화해도 됨
+    }
+
+    async function loadEvents(){
+      hideErr(eventErr);
+      eventsList.innerHTML = "";
+      const r = await api("/api/events");
+      const events = r.events || [];
+
+      if(events.length === 0){
+        const empty = document.createElement("div");
+        empty.className = "hint";
+        empty.textContent = "아직 일정 없음. (인생이 너무 평화로운가?)";
+        eventsList.appendChild(empty);
+        return;
+      }
+
+      for(const ev of events){
+        const item = document.createElement("div");
+        item.className = "item";
+
+        const top = document.createElement("div");
+        top.className = "itemTop";
+
+        const left = document.createElement("div");
+        const t = document.createElement("div");
+        t.className = "itemTitle";
+        t.textContent = ev.title || "(제목 없음)";
+        const meta = document.createElement("div");
+        meta.className = "meta";
+        meta.textContent = `${ev.day}${ev.time ? " " + ev.time : ""} · 작성자: ${ev.owner}`;
+        left.appendChild(t);
+        left.appendChild(meta);
+
+        const right = document.createElement("div");
+        right.className = "miniBtns";
+
+        const login = getLogin();
+        const canEdit = login && login.user && login.user.id === ev.owner;
+
+        const editBtn = document.createElement("button");
+        editBtn.className = "ghost";
+        editBtn.textContent = "수정";
+        editBtn.disabled = !canEdit;
+        editBtn.onclick = async () => {
+          const newTitle = prompt("새 제목", ev.title || "");
+          if(newTitle === null) return;
+          const newTime = prompt("새 시간(HH:MM) 비우면 삭제", ev.time || "");
+          if(newTime === null) return;
+          const newMemo = prompt("새 메모", ev.memo || "");
+          if(newMemo === null) return;
+
+          try{
+            await api(`/api/events/${ev.id}`, {
+              method:"PATCH",
+              body: JSON.stringify({
+                user_id: login.user.id,
+                password: login.password,
+                title: newTitle,
+                time: newTime,
+                memo: newMemo
+              })
+            });
+            showOk(eventOk, "수정 완료");
+            await loadEvents();
+          }catch(e){
+            showErr(eventErr, e.message);
+          }
+        };
+
+        const delBtn = document.createElement("button");
+        delBtn.className = "danger";
+        delBtn.textContent = "삭제";
+        delBtn.disabled = !canEdit;
+        delBtn.onclick = async () => {
+          if(!confirm("진짜 삭제?")) return;
+          try{
+            const q = new URLSearchParams({
+              user_id: login.user.id,
+              password: login.password
+            });
+            await api(`/api/events/${ev.id}?` + q.toString(), { method:"DELETE" });
+            showOk(eventOk, "삭제 완료");
+            await loadEvents();
+          }catch(e){
+            showErr(eventErr, e.message);
+          }
+        };
+
+        right.appendChild(editBtn);
+        right.appendChild(delBtn);
+
+        top.appendChild(left);
+        top.appendChild(right);
+
+        const memo = document.createElement("div");
+        memo.className = "memo";
+        memo.textContent = ev.memo ? ev.memo : "";
+
+        item.appendChild(top);
+        if(ev.memo) item.appendChild(memo);
+
+        eventsList.appendChild(item);
+      }
+    }
+
+    async function addEvent(){
+      hideErr(eventErr);
+      const login = getLogin();
+      if(!login) return showErr(eventErr, "로그인부터 해");
+
+      const day = dayInput.value;
+      const time = timeInput.value || null;
+      const title = titleInput.value.trim();
+      const memo = memoInput.value.trim();
+
+      if(!day) return showErr(eventErr, "날짜 선택");
+      if(!title) return showErr(eventErr, "제목 입력");
+
+      try{
+        await api("/api/events", {
+          method:"POST",
+          body: JSON.stringify({
+            user_id: login.user.id,
+            password: login.password,
+            title,
+            day,
+            time,
+            memo
+          })
+        });
+        showOk(eventOk, "추가 완료");
+        clearInputs();
+        await loadEvents();
+      }catch(e){
+        showErr(eventErr, e.message);
+      }
+    }
+
+    // 이벤트 바인딩 (네가 “클릭 안됨”이라 한 거, 여기서 다 살아남)
+    loginBtn.addEventListener("click", doLogin);
+    logoutBtn.addEventListener("click", doLogout);
+    refreshBtn.addEventListener("click", loadEvents);
+    addBtn.addEventListener("click", addEvent);
+    clearBtn.addEventListener("click", clearInputs);
+
+    // 엔터로 로그인
+    passInput.addEventListener("keydown", (e)=>{
+      if(e.key === "Enter") doLogin();
+    });
+
+    // 초기 로드
+    (async function init(){
+      await checkServer();
+      await loadUsers();     // 여기서 404 나면 화면이 “죽어 보이던” 거였음
+      syncLoginUI();
+      await loadEvents();
+    })();
+  </script>
 </body>
 </html>
